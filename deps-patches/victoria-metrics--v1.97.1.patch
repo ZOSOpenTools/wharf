@@ -1,0 +1,107 @@
+diff --git a/lib/filestream/filestream_zos.go b/lib/filestream/filestream_zos.go
+new file mode 100644
+index 000000000..c319166dd
+--- /dev/null
++++ b/lib/filestream/filestream_zos.go
+@@ -0,0 +1,30 @@
++package filestream
++
++import (
++        "fmt"
++
++        "golang.org/x/sys/unix"
++)
++
++func (st *streamTracker) adviseDontNeed(n int, fdatasync bool) error {
++        st.length += uint64(n)
++        if st.fd == 0 {
++                return nil
++        }
++        if st.length < dontNeedBlockSize {
++                return nil
++        }
++        blockSize := st.length - (st.length % dontNeedBlockSize)
++        if fdatasync {
++                if err := unix.Fsync(int(st.fd)); err != nil {
++                        return fmt.Errorf("unix.Fsync error: %w", err)
++                }
++        }
++        st.offset += blockSize
++        st.length -= blockSize
++        return nil
++}
++
++func (st *streamTracker) close() error {
++        return nil
++}
+diff --git a/lib/fs/fadvise_zos.go b/lib/fs/fadvise_zos.go
+new file mode 100644
+index 000000000..2a158b771
+--- /dev/null
++++ b/lib/fs/fadvise_zos.go
+@@ -0,0 +1,8 @@
++package fs
++
++import "os"
++
++func fadviseSequentialRead(f *os.File, prefetch bool) error {
++       // TODO: implement this properly
++       return nil
++}
+diff --git a/lib/fs/fs_nix.go b/lib/fs/fs_nix.go
+index fed424edb..4141ed89a 100644
+--- a/lib/fs/fs_nix.go
++++ b/lib/fs/fs_nix.go
+@@ -1,4 +1,4 @@
+-//go:build linux || darwin || freebsd
++//go:build linux || darwin || freebsd || zos
+
+ package fs
+
+diff --git a/lib/fs/fs_unix.go b/lib/fs/fs_unix.go
+index c7308fa37..f4605e1b1 100644
+--- a/lib/fs/fs_unix.go
++++ b/lib/fs/fs_unix.go
+@@ -1,4 +1,4 @@
+-//go:build linux || darwin || freebsd || openbsd
++//go:build linux || darwin || freebsd || openbsd || zos
+
+ package fs
+
+diff --git a/lib/memory/memory_zos.go b/lib/memory/memory_zos.go
+new file mode 100644
+index 000000000..5178989a8
+--- /dev/null
++++ b/lib/memory/memory_zos.go
+@@ -0,0 +1,31 @@
++package memory
++
++import (
++       "syscall"
++
++       "github.com/VictoriaMetrics/VictoriaMetrics/lib/cgroup"
++       "github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
++)
++
++const maxInt = int(^uint(0) >> 1)
++
++func sysTotalMemory() int {
++       var si syscall.Sysinfo_t
++       if err := syscall.Sysinfo(&si); err != 0 {
++               logger.Panicf("FATAL: error in syscall.Sysinfo: %s", err)
++       }
++       totalMem := maxInt
++       if uint64(maxInt)/uint64(si.Totalram) > uint64(si.Unit) {
++               totalMem = int(uint64(si.Totalram) * uint64(si.Unit))
++       }
++       mem := cgroup.GetMemoryLimit()
++       if mem <= 0 || int64(int(mem)) != mem || int(mem) > totalMem {
++               // Try reading hierarchical memory limit.
++               // See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/699
++               mem = cgroup.GetHierarchicalMemoryLimit()
++               if mem <= 0 || int64(int(mem)) != mem || int(mem) > totalMem {
++                       return totalMem
++               }
++       }
++       return int(mem)
++}
